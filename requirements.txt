@@ -1,0 +1,26 @@
+# Direct dependencies, pinned to the versions tested locally (SRS 5, NFR-06).
+# torch is installed separately in the Dockerfile from the PyTorch CPU index.
+
+# Web layer
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-dotenv==1.2.3
+
+# TTS provider
+kokoro==0.9.4
+misaki==0.9.4
+transformers==5.17.0
+huggingface-hub==1.33.0
+soundfile==0.14.0
+numpy==2.5.3
+
+# English G2P front-end (text -> phonemes)
+spacy==3.8.16
+espeakng-loader==0.2.4
+phonemizer-fork==3.3.2
+num2words==0.5.14
+loguru==0.7.3
+
+# torch==2.14.0 installed from https://download.pytorch.org/whl/cpu

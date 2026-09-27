@@ -1,0 +1,14 @@
+.env
+.venv
+
+# Hugging Face model cache + local run logs
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated audio from tests
+*.wav
+*.mp3

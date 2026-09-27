@@ -1,0 +1,12 @@
+.git
+.gitignore
+.venv
+.cache
+.env
+**/__pycache__
+**/*.pyc
+.pytest_cache
+tests
+*.wav
+*.mp3
+README.md
