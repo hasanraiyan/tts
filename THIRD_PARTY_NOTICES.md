@@ -59,6 +59,12 @@ weights is bundled in `licenses/`.
 
 ## 3. This service
 
-No licence has been chosen for the service code in this repository. Add a
-`LICENSE` file before distributing it. Nothing here overrides the terms of the
-components listed above.
+The service code in this repository is licensed under the MIT License (see
+[`LICENSE`](LICENSE)).
+
+The two licences coexist without conflict: MIT is a permissive licence, so it
+places no obligation on the Apache-2.0 components above, and those components
+keep their own terms regardless of this repository's licence. If you vendor or
+modify an Apache-2.0 file (for example a fork of `kokoro` or `misaki`), that
+modified file must continue to be distributed under Apache-2.0 with its notices
+retained.
