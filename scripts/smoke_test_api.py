@@ -1,12 +1,12 @@
 """End-to-end smoke test for the TTS API.
 
-Runs the same checks against any deployment:
+Runs the same checks against any deployment. Defaults to the live instance:
 
+    python scripts/smoke_test_api.py
     python scripts/smoke_test_api.py http://127.0.0.1:8000 --api-key KEY
-    python scripts/smoke_test_api.py https://your-service.onrender.com --api-key KEY
 
-Exit code 0 means every check passed, so it is safe to use as a Render
-post-deploy gate.
+Exit code 0 means every check passed, so it is safe to use as a post-deploy
+gate.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+DEFAULT_BASE_URL = "https://tts-rab2.onrender.com"
 
 PASS, FAIL = "PASS", "FAIL"
 results: list[tuple[str, str, str]] = []
@@ -62,9 +64,17 @@ def audio_seconds(data: bytes) -> float:
         return 0.0
 
 
+def header(headers, name, default=None):
+    """HTTP header names are case-insensitive; urllib keeps the server's casing."""
+    for key, value in headers.items():
+        if key.lower() == name.lower():
+            return value
+    return default
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("base_url", nargs="?", default="http://127.0.0.1:8000")
+    parser.add_argument("base_url", nargs="?", default=DEFAULT_BASE_URL)
     parser.add_argument("--api-key", default="test-local-key")
     parser.add_argument("--text", default=None)
     args = parser.parse_args()
@@ -118,7 +128,7 @@ def main() -> int:
     elapsed = time.perf_counter() - started
     if status == 200:
         duration = audio_seconds(body)
-        ctype = headers.get("Content-Type", "")
+        ctype = header(headers, "Content-Type", "")
         ok = len(body) > 1000 and duration > 0.5
         record("POST /v1/speech (mp3) -> audio", PASS if ok else FAIL,
                f"{len(body)} bytes, {ctype}, {duration:.2f}s audio in {elapsed:.2f}s wall")
@@ -129,7 +139,7 @@ def main() -> int:
     status, body, headers = request("POST", f"{base}/v1/speech", api_key=args.api_key, body=payload)
     duration = audio_seconds(body) if status == 200 else 0
     record("POST /v1/speech (wav) -> audio", PASS if status == 200 and duration > 0.5 else FAIL,
-           f"{len(body)} bytes, {headers.get('Content-Type')}, {duration:.2f}s audio")
+           f"{len(body)} bytes, {header(headers, 'Content-Type')}, {duration:.2f}s audio")
 
     long_text = ("This is a longer paragraph used to measure sustained performance. " * 12)[:4200]
     timings = []
@@ -141,7 +151,7 @@ def main() -> int:
         )
         timings.append(time.perf_counter() - started)
     if status == 200:
-        rtf = headers.get("X-Real-Time-Factor", "?")
+        rtf = header(headers, "X-Real-Time-Factor", "?")
         record("POST /v1/speech (long text, 3x)", PASS,
                f"median {statistics.median(timings):.1f}s, RTF={rtf}")
     else:

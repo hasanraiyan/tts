@@ -57,7 +57,10 @@ Base URL: `http://127.0.0.1:8000` locally. Interactive docs at `/docs`, schema a
 | GET | `/ready` | no | Model readiness. 200 when audio can be generated, else 503. |
 | GET | `/v1/info` | yes | Provider, model revision, limits, formats. |
 | GET | `/v1/voices` | yes | Available voice ids. |
-| POST | `/v1/speech` | yes | Generate speech. |
+| POST | `/v1/speech` | yes | Generate speech (waits for the audio) |
+| POST | `/v1/speech/jobs` | yes | Queue generation, returns a run id |
+| GET | `/v1/jobs/{id}` | yes | Job status and progress |
+| GET | `/v1/jobs/{id}/audio` | yes | Download a finished job |
 
 ### Generate speech
 
@@ -111,6 +114,51 @@ Always JSON, never a stack trace:
 | `SERVER_BUSY` | 503 | Queue timeout while waiting for the model |
 | `TTS_GENERATION_FAILED` | 500 | Synthesis raised |
 | `INTERNAL_ERROR` | 500 | Anything unexpected |
+
+### Long text: the job queue
+
+`POST /v1/speech` holds the connection open for the whole generation. On a small
+CPU-only instance that can outlast a client timeout, so the same work is also
+available as a job:
+
+```bash
+# 1. queue it, get a run id back immediately
+curl -X POST https://tts-rab2.onrender.com/v1/speech/jobs \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -d '{"text":"A long passage...","format":"mp3"}'
+# -> 202 {"run_id":"2fa14b78...","status":"running","progress":0.0,
+#         "chunks":{"done":0,"total":12},"audio_url":null}
+
+# 2. poll until status is "completed"
+curl https://tts-rab2.onrender.com/v1/jobs/2fa14b78... -H "Authorization: Bearer $API_KEY"
+# -> {"run_id":"...","status":"completed","progress":1.0,
+#     "audio_seconds":61.2,"generation_seconds":143.8,"audio_url":"/v1/jobs/.../audio"}
+
+# 3. download
+curl https://tts-rab2.onrender.com/v1/jobs/2fa14b78.../audio \
+  -H "Authorization: Bearer $API_KEY" --output speech.mp3
+```
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/v1/speech/jobs` | Queue generation, returns `202` + `run_id` |
+| GET | `/v1/jobs` | This key's jobs, newest first |
+| GET | `/v1/jobs/{run_id}` | Status, progress, timings |
+| GET | `/v1/jobs/{run_id}/audio` | The audio; `409` until completed |
+| DELETE | `/v1/jobs/{run_id}` | Drop the job and free its memory |
+
+`progress` and `chunks` are real: text is split on sentence boundaries and each
+sentence is generated separately, so a 12-sentence job reports `4/12` rather
+than an indeterminate spinner. The model slot is released between sentences, so
+one long job cannot starve a short synchronous request.
+
+Jobs are scoped to the API key that created them — another client gets `404`,
+and an unknown key gets `401`. Results live in memory with a one-hour TTL and a
+64 MB total budget, and are lost if the instance restarts. That is deliberate:
+this is a queue for slow generation, not durable audio storage (SRS 30). Tune
+nothing — the limits are constants in `app/services/jobs.py`.
+
+Verified end to end with `scripts/test_job_flow.py`.
 
 ---
 
@@ -282,6 +330,7 @@ app/
 scripts/
 ├── smoke_tts.py         text → audio → decode, no API involved
 ├── smoke_test_api.py    full end-to-end check against any base URL
+├── test_job_flow.py     async job queue end-to-end check
 ├── probe_onnx_memory.py measures whether the model fits a memory cap
 └── resolve_voice_ids.py proves the voice name→id mapping across providers
 ```
