@@ -40,6 +40,10 @@ allow_patterns=['config.json','kokoro-v1_0.pth','voices/*.pt'])" ; \
 
 COPY app ./app
 COPY scripts ./scripts
+# Apache-2.0 section 4 requires shipping the licence and attribution notices
+# alongside the redistributed Kokoro weights baked in above.
+COPY THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md
+COPY licenses ./licenses
 
 # Run as a non-root user (SRS 35).
 RUN useradd --create-home --uid 10001 appuser \
