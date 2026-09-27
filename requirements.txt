@@ -1,5 +1,9 @@
-# Direct dependencies, pinned to the versions tested locally (SRS 5, NFR-06).
-# torch is installed separately in the Dockerfile from the PyTorch CPU index.
+# Direct dependencies, pinned to the versions tested (SRS 5, NFR-06).
+#
+# This is the default, memory-light stack: sherpa-onnx runs Kokoro v1.0 in
+# ~370MB, which fits Render's 512MB free plan. PyTorch is NOT installed here
+# because it is only needed by the optional "torch" provider; see
+# requirements-torch.txt.
 
 # Web layer
 fastapi==0.141.1
@@ -8,19 +12,10 @@ pydantic==2.13.5
 pydantic-settings==2.15.0
 python-dotenv==1.2.3
 
-# TTS provider
-kokoro==0.9.4
-misaki==0.9.4
-transformers==5.17.0
-huggingface-hub==1.33.0
+# TTS runtime (ONNX). Bundles its own onnxruntime, so no separate pin needed.
+sherpa-onnx==1.13.8
+
+# Audio encoding and model cache
 soundfile==0.14.0
 numpy==2.5.3
-
-# English G2P front-end (text -> phonemes)
-spacy==3.8.16
-espeakng-loader==0.2.4
-phonemizer-fork==3.3.2
-num2words==0.5.14
-loguru==0.7.3
-
-# torch==2.14.0 installed from https://download.pytorch.org/whl/cpu
+huggingface-hub==1.33.0

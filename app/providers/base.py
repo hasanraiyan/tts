@@ -84,6 +84,10 @@ class TTSProvider(ABC):
     def supports_voice(self, voice_id: str) -> bool:
         ...
 
+    def list_languages(self) -> list[str]:
+        """Language codes this provider can speak, for discovery endpoints."""
+        return []
+
     @abstractmethod
     def synthesize(
         self,

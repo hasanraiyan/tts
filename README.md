@@ -144,7 +144,10 @@ Every variable, its default, and what it does. All are optional unless noted.
 | `API_KEY_<NAME>` | — | **Required for any `/v1/*` call.** One per client. |
 | `HF_TOKEN` | unset | Hugging Face token. Optional for the public Kokoro repo; set it to avoid anonymous rate limits. |
 | `HF_HOME` | `~/.cache/huggingface` | Model cache location. Baked to `/app/.cache/huggingface` in the image. |
-| `MODEL_ID` | `hexgrad/Kokoro-82M` | Model repo. Baked into the image; see render.yaml. |
+| `MODEL_ID` | `hexgrad/Kokoro-82M` | Model repo. Only used by the `torch` provider. |
+| `TTS_PROVIDER` | `onnx` | `onnx` (370MB, fits free tier) or `torch` (fp32, needs 1.3GB) |
+| `ONNX_MODEL_DIR` | `/app/models/kokoro-int8-multi-lang-v1_0` | Where the ONNX model lives |
+| `ONNX_NUM_THREADS` | `1` | CPU threads for ONNX inference |
 | `MODEL_REVISION` | `f3ff3571…b4987` | **Pinned commit.** Guarantees identical weights everywhere. |
 | `MODEL_WEIGHTS_FILE` | `kokoro-v1_0.pth` | Which weight file to load. |
 | `DEFAULT_LANGUAGE` | `en` | Language used when the request omits one |
@@ -171,43 +174,50 @@ on the first request; `/ready` stays 503 until then.
 
 ## Performance
 
-Measured on this repository's Docker image (`ai-tts-service`), CPU only. The
-generation figures are for a 6 s sentence on one thread.
+Measured on this repository's Docker image, CPU only, 1 inference thread. The
+ONNX row is the default; the PyTorch row is kept for quality comparisons.
 
-| Metric | Value |
-| --- | --- |
-| Model download (cold) | ~340 MB, ~90 s first ever, then cached |
-| Model load from cache | ~14 s |
-| Resident memory after load | ~1.07 GB |
-| **Peak memory during generation** | **~1.25–1.40 GB** |
-| Import cost (torch + spacy) | ~274 MB |
-| Kokoro weights | ~327 MB |
-| Real-time factor, 1 thread | ~1.5 (6 s audio in ~9 s) |
-| Real-time factor, 4 threads | ~0.7 on a 16-thread desktop CPU |
+| Metric | **ONNX (default)** | PyTorch (optional) |
+| --- | --- | --- |
+| **Peak memory** | **~370 MB** | ~1.25–1.40 GB |
+| Steady memory after load | ~355 MB | ~1.07 GB |
+| Model load from cache | **1.9 s** | ~14 s |
+| Model on disk | 183 MB | 340 MB |
+| Runtime import cost | 25 MB | 274 MB (torch + spacy) |
+| Real-time factor, 1 thread | ~1.5–1.9 | ~1.5 |
+| Real-time factor, 4 threads | — | ~0.7 (16-thread desktop) |
+| Image size | ~0.9 GB | ~3.6 GB |
 
-Where the memory goes, and why it cannot simply be trimmed:
+Both providers run the same Apache-2.0 Kokoro v1.0 weights; the ONNX build is
+int8-quantised, which is where the memory and size savings come from.
 
-- `torch` + `spacy` imports alone are ~274 MB.
-- The 327 MB of weights are resident while the model is being built, so peak
-  exceeds the steady state.
-- mmap-loading the weights was measured and did **not** reduce peak (1249 MB
-  both ways) while roughly doubling synthesis time, so it is not used.
+**Why there are two providers.** PyTorch cannot run in 512 MB and there is no
+flag that changes that: `import torch` plus `spacy` costs 274 MB before any
+inference, and the fp32 weights are 327 MB. Memory-mapping them was measured and
+did not help (identical 1249 MB peak, ~2x slower synthesis), so the fix had to
+be a lighter runtime, not a tuned one. ONNX peaks at 370 MB, verified inside a
+container hard-capped with `--memory=512m`, which is why the service defaults to
+it and runs on Render's free plan.
 
-**Consequence: Render must be the 2 GB plan.** Both the free (512 MB) and
-Starter (512 MB, more CPU) plans are killed by the OOM killer during model
-load. `render.yaml` therefore pins `plan: standard`. This is the single most
-important operational fact about this service.
+Switch between them with `TTS_PROVIDER=onnx|torch`. Clients cannot tell the
+difference — same endpoints, same voices, same response headers.
 
-If a 512 MB instance is ever a hard requirement, the realistic path is an ONNX
-runtime (sherpa-onnx) instead of PyTorch, which trades some quality for roughly
-half the memory. The provider abstraction exists to make that swap possible
-without touching the API.
+### The real limit on the free plan
 
-Reproduce the numbers:
+Memory is solved; **CPU is not**. Render's free plan is 512 MB but only 0.1
+core, and the measurements above are from a full core. Expect real-time factor
+to degrade roughly 10x, i.e. a 60-second passage may take several minutes, and
+`MAX_TEXT_LENGTH=5000` is far more text than a free instance should be asked
+for at once. For production traffic use a paid plan; for testing and low volume
+the free plan is fine. If you raise `MAX_TEXT_LENGTH` awareness to users, pair
+it with client-side timeouts and retries on `503 SERVER_BUSY`.
+
+Reproduce the memory numbers:
 
 ```powershell
-docker run --rm -p 8010:8000 -e API_KEY=test ai-tts-service:latest
+docker run --rm --memory=512m -p 8010:8000 -e API_KEY=test ai-tts-service:latest
 python scripts/smoke_test_api.py http://127.0.0.1:8010 --api-key test
+docker stats ai-tts-service          # watch MEM USAGE
 ```
 
 ---

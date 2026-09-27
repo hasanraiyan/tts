@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     model_revision: str = "f3ff3571791e39611d31c381e3a41a3af07b4987"
     model_weights_file: str = "kokoro-v1_0.pth"
 
+    # Which TTS runtime to use: "onnx" (fits 512MB) or "torch" (best quality)
+    tts_provider: str = "onnx"
+    onnx_model_dir: str = "/app/models/kokoro-int8-multi-lang-v1_0"
+    onnx_num_threads: int = 1
+
     # TTS defaults / capabilities
     default_language: str = "en"
     default_voice: str = "af_heart"

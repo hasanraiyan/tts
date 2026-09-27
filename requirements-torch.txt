@@ -1,0 +1,23 @@
+# Extra dependencies for the optional PyTorch provider (TTS_PROVIDER=torch).
+#
+# Only needed if you want the fp32 runtime instead of the ONNX one. It costs
+# ~1.3GB of RAM at inference time, so it does NOT fit Render's 512MB plans, and
+# it adds roughly 1GB to the image. Install with:
+#     pip install -r requirements-torch.txt
+# and install torch from the CPU index first:
+#     pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+
+kokoro==0.9.4
+misaki==0.9.4
+transformers==5.17.0
+loguru==0.7.3
+
+# English G2P front-end used by the kokoro package
+spacy==3.8.16
+espeakng-loader==0.2.4
+phonemizer-fork==3.3.2
+num2words==0.5.14
+
+# spaCy model, normally fetched lazily at first use. Pin it to keep the first
+# request fast and the build reproducible:
+#   https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

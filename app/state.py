@@ -9,13 +9,30 @@ from __future__ import annotations
 from app.config import Settings
 from app.providers.base import TTSProvider
 from app.providers.kokoro import KokoroProvider
+from app.providers.onnx import KokoroOnnxProvider
 from app.services.tts import TTSService
+
+PROVIDERS: dict[str, type] = {
+    "onnx": KokoroOnnxProvider,
+    "torch": KokoroProvider,
+}
+
+
+def build_provider(settings: Settings) -> TTSProvider:
+    """Pick the runtime named by TTS_PROVIDER, defaulting to the light one."""
+    name = (settings.tts_provider or "onnx").strip().lower()
+    provider_cls = PROVIDERS.get(name)
+    if provider_cls is None:
+        raise ValueError(
+            f"Unknown TTS_PROVIDER '{name}'. Available: {sorted(PROVIDERS)}"
+        )
+    return provider_cls(settings)
 
 
 class Runtime:
     def __init__(self, settings: Settings, provider: TTSProvider | None = None) -> None:
         self.settings = settings
-        self.provider: TTSProvider = provider or KokoroProvider(settings)
+        self.provider: TTSProvider = provider or build_provider(settings)
         self.service = TTSService(self.provider, settings)
         self.ready = False
         self.detail: str | None = None

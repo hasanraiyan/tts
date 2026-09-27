@@ -16,7 +16,6 @@ from app.api.schemas import (
 from app.config import Settings
 from app.errors import APIError, ErrorCode
 from app.logging_config import get_logger
-from app.providers.kokoro import LANG_CODE_BY_LANGUAGE
 from app.state import get_runtime
 
 logger = get_logger(__name__)
@@ -96,7 +95,7 @@ def info(settings: Settings = Depends(settings_dependency)) -> InfoResponse:
             "queue_timeout_seconds": settings.queue_timeout_seconds,
         },
         formats=settings.formats,
-        languages=sorted(LANG_CODE_BY_LANGUAGE),
+        languages=provider.list_languages(),
         voice_count=len(provider.list_voices()),
         ready=runtime.is_ready(),
     )
@@ -160,7 +159,7 @@ async def speech(
             ErrorCode.UNSUPPORTED_LANGUAGE,
             f"Language '{language}' is not supported.",
             status_code=400,
-            supported_languages=sorted(LANG_CODE_BY_LANGUAGE),
+            supported_languages=provider.list_languages(),
         )
 
     output_format = (payload.format or settings.default_format).lower()

@@ -17,24 +17,16 @@ import numpy as np
 from app.config import Settings
 from app.logging_config import get_logger
 from app.providers.base import AudioResult, TTSProvider, Voice
+from app.providers.voices import (
+    VOICE_DESCRIPTIONS,
+    voice_display_name,
+    voice_gender,
+)
 
 logger = get_logger(__name__)
 
 # lang_code understood by Kokoro's English pipelines.
 LANG_CODE_BY_LANGUAGE = {"en": "a"}
-
-VOICE_DESCRIPTIONS: dict[str, str] = {
-    "af_heart": "Warm, expressive American female voice.",
-    "af_bella": "Soft, breathy American female voice.",
-    "af_nicole": "Calm, low American female voice.",
-    "af_sarah": "Confident American female voice.",
-    "af_sky": "Bright, upbeat American female voice.",
-    "am_michael": "Relaxed American male voice.",
-    "am_fenrir": "Bold, deep American male voice.",
-    "am_puck": "Energetic American male voice.",
-    "bf_emma": "Warm British female voice.",
-    "bm_george": "Steady British male voice.",
-}
 
 
 class KokoroProvider(TTSProvider):
@@ -120,27 +112,11 @@ class KokoroProvider(TTSProvider):
             self._pipeline.voices[voice_id] = torch.load(path, weights_only=True)
             self._voices[voice_id] = Voice(
                 id=voice_id,
-                name=self._voice_name(voice_id),
+                name=voice_display_name(voice_id),
                 language="en",
-                gender=self._voice_gender(voice_id),
+                gender=voice_gender(voice_id),
                 description=VOICE_DESCRIPTIONS.get(voice_id),
             )
-
-    @staticmethod
-    def _voice_gender(voice_id: str) -> str | None:
-        if voice_id.startswith("af") or voice_id.startswith("bf"):
-            return "female"
-        if voice_id.startswith("am") or voice_id.startswith("bm"):
-            return "male"
-        return None
-
-    @classmethod
-    def _voice_name(cls, voice_id: str) -> str:
-        if voice_id in VOICE_DESCRIPTIONS:
-            return voice_id.replace("_", " ").title()
-        gender = cls._voice_gender(voice_id) or ""
-        accent = "American" if voice_id.startswith("a") else "British"
-        return f"{accent} {gender} voice".strip().title()
 
     def is_loaded(self) -> bool:
         return self._model is not None and self._pipeline is not None
@@ -152,6 +128,9 @@ class KokoroProvider(TTSProvider):
 
     def supports_language(self, language: str) -> bool:
         return language.lower() in LANG_CODE_BY_LANGUAGE
+
+    def list_languages(self) -> list[str]:
+        return sorted(LANG_CODE_BY_LANGUAGE)
 
     def supports_voice(self, voice_id: str) -> bool:
         return voice_id in self._voices
