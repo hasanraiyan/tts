@@ -78,3 +78,47 @@ class InfoResponse(BaseModel):
     languages: list[str]
     voice_count: int
     ready: bool
+
+
+class SpeechJobRequest(BaseModel):
+    """Same options as SpeechRequest; returns a run id instead of audio."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "text": "The most important thing is to focus on one task at a time.",
+                "voice": "default",
+                "format": "mp3",
+            }
+        }
+    )
+
+    text: str = Field(..., description="Text to speak.", examples=["Hello world."])
+    language: str | None = Field(default=None, description="Language code, e.g. 'en'.")
+    voice: str | None = Field(default=None, description="Voice id from GET /v1/voices.")
+    format: str | None = Field(default=None, description="Output format: mp3 or wav.")
+    speed: float | None = Field(default=None, ge=0.5, le=2.0)
+
+
+class JobResponse(BaseModel):
+    run_id: str
+    status: str
+    progress: float
+    chunks: dict[str, int]
+    text_characters: int
+    voice: str
+    language: str
+    format: str
+    speed: float
+    created_at: float
+    started_at: float | None = None
+    finished_at: float | None = None
+    audio_seconds: float | None = None
+    generation_seconds: float | None = None
+    error: str | None = None
+    message: str | None = None
+    audio_url: str | None = None
+
+
+class JobListResponse(BaseModel):
+    jobs: list[JobResponse]

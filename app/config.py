@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     torch_num_threads: int = 4
     preload_model: bool = True
 
+    # Asynchronous job queue settings live in app/services/jobs.py as constants.
+    # They are deliberately not environment variables: the defaults are correct
+    # for every deployment target, so there is nothing to configure.
+
     @property
     def formats(self) -> list[str]:
         return [f.strip().lower() for f in self.supported_formats.split(",") if f.strip()]

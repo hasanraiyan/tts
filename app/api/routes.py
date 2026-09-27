@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.dependencies import ClientContext, settings_dependency, verify_api_key
 from app.api.schemas import (
     HealthResponse,
     InfoResponse,
+    JobListResponse,
+    JobResponse,
     ReadyResponse,
+    SpeechJobRequest,
     SpeechRequest,
     Voice,
     VoiceListResponse,
@@ -36,6 +39,51 @@ def _resolve_voice(voice: str | None, settings: Settings, provider) -> str:
             status_code=400,
         )
     return candidate
+
+
+def _validate_request(
+    text: str | None,
+    language: str | None,
+    voice: str | None,
+    output_format: str | None,
+    settings: Settings,
+    provider,
+) -> tuple[str, str, str, str, float]:
+    """Shared validation for the sync and async speech endpoints.
+
+    Returns (text, language, voice, format, speed) and raises APIError otherwise.
+    """
+    text = (text or "").strip()
+    if not text:
+        raise APIError(ErrorCode.INVALID_REQUEST, "Text must not be empty.", status_code=400)
+    if len(text) > settings.max_text_length:
+        raise APIError(
+            ErrorCode.TEXT_TOO_LONG,
+            f"Text exceeds the maximum allowed length of {settings.max_text_length} characters.",
+            status_code=413,
+        )
+
+    resolved_language = (language or settings.default_language).lower()
+    if not provider.supports_language(resolved_language):
+        raise APIError(
+            ErrorCode.UNSUPPORTED_LANGUAGE,
+            f"Language '{resolved_language}' is not supported.",
+            status_code=400,
+            supported_languages=provider.list_languages(),
+        )
+
+    resolved_format = (output_format or settings.default_format).lower()
+    if resolved_format not in settings.formats:
+        raise APIError(
+            ErrorCode.UNSUPPORTED_FORMAT,
+            f"Format '{resolved_format}' is not supported.",
+            status_code=400,
+            supported_formats=settings.formats,
+        )
+
+    return text, resolved_language, _resolve_voice(voice, settings, provider), resolved_format, (
+        settings.default_speed
+    )
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"], summary="Liveness probe")
@@ -136,43 +184,16 @@ def voices(settings: Settings = Depends(settings_dependency)) -> VoiceListRespon
 async def speech(
     payload: SpeechRequest,
     request: Request,
-    response: Response,
     client: ClientContext = Depends(verify_api_key),
     settings: Settings = Depends(settings_dependency),
 ) -> Response:
     runtime = get_runtime()
     provider = runtime.provider
 
-    text = (payload.text or "").strip()
-    if not text:
-        raise APIError(ErrorCode.INVALID_REQUEST, "Text must not be empty.", status_code=400)
-    if len(text) > settings.max_text_length:
-        raise APIError(
-            ErrorCode.TEXT_TOO_LONG,
-            f"Text exceeds the maximum allowed length of {settings.max_text_length} characters.",
-            status_code=413,
-        )
-
-    language = (payload.language or settings.default_language).lower()
-    if not provider.supports_language(language):
-        raise APIError(
-            ErrorCode.UNSUPPORTED_LANGUAGE,
-            f"Language '{language}' is not supported.",
-            status_code=400,
-            supported_languages=provider.list_languages(),
-        )
-
-    output_format = (payload.format or settings.default_format).lower()
-    if output_format not in settings.formats:
-        raise APIError(
-            ErrorCode.UNSUPPORTED_FORMAT,
-            f"Format '{output_format}' is not supported.",
-            status_code=400,
-            supported_formats=settings.formats,
-        )
-
-    voice = _resolve_voice(payload.voice, settings, provider)
-    speed = payload.speed or settings.default_speed
+    text, language, voice, output_format, default_speed = _validate_request(
+        payload.text, payload.language, payload.voice, payload.format, settings, provider
+    )
+    speed = payload.speed or default_speed
 
     audio_bytes, media_type, result = await runtime.service.generate(
         text,
@@ -199,3 +220,131 @@ async def speech(
             "X-Provider": result.provider,
         },
     )
+
+
+# --------------------------------------------------------------------- jobs
+
+
+@router.post(
+    "/v1/speech/jobs",
+    response_model=JobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["jobs"],
+    summary="Queue speech generation and return a run id",
+    responses={
+        202: {"description": "Job accepted. Poll GET /v1/jobs/{run_id} for progress."},
+        400: {"description": "Validation error."},
+        401: {"description": "Missing or invalid API key."},
+        413: {"description": "Text too long."},
+        429: {"description": "Rate limited or too many pending jobs."},
+        503: {"description": "Job queue full."},
+    },
+)
+def create_job(
+    payload: SpeechJobRequest,
+    client: ClientContext = Depends(verify_api_key),
+    settings: Settings = Depends(settings_dependency),
+) -> JobResponse:
+    runtime = get_runtime()
+    if not runtime.service.is_ready():
+        raise APIError(
+            ErrorCode.MODEL_NOT_READY,
+            "TTS model is still loading. Retry shortly.",
+            status_code=503,
+        )
+
+    text, language, voice, output_format, default_speed = _validate_request(
+        payload.text, payload.language, payload.voice, payload.format, settings, runtime.provider
+    )
+    job = runtime.jobs.submit(
+        client_id=client.client_id,
+        text=text,
+        voice=voice,
+        language=language,
+        output_format=output_format,
+        speed=payload.speed or default_speed,
+    )
+    return JobResponse(**job.public())
+
+
+@router.get(
+    "/v1/jobs",
+    response_model=JobListResponse,
+    tags=["jobs"],
+    summary="List this API key's jobs",
+    dependencies=[Depends(verify_api_key)],
+)
+def list_jobs(
+    client: ClientContext = Depends(verify_api_key),
+    settings: Settings = Depends(settings_dependency),
+) -> JobListResponse:
+    return JobListResponse(
+        jobs=[JobResponse(**job.public()) for job in get_runtime().jobs.list(client.client_id)]
+    )
+
+
+@router.get(
+    "/v1/jobs/{run_id}",
+    response_model=JobResponse,
+    tags=["jobs"],
+    summary="Job status and progress",
+    responses={404: {"description": "Unknown run_id."}},
+)
+def get_job(
+    run_id: str,
+    client: ClientContext = Depends(verify_api_key),
+    settings: Settings = Depends(settings_dependency),
+) -> JobResponse:
+    return JobResponse(**get_runtime().jobs.get(run_id, client.client_id).public())
+
+
+@router.get(
+    "/v1/jobs/{run_id}/audio",
+    tags=["jobs"],
+    summary="Download the audio of a completed job",
+    response_class=Response,
+    responses={
+        200: {"content": {"audio/mpeg": {}, "audio/wav": {}}, "description": "The audio."},
+        404: {"description": "Unknown run_id."},
+        409: {"description": "Job has not completed yet."},
+    },
+)
+def get_job_audio(
+    run_id: str,
+    client: ClientContext = Depends(verify_api_key),
+    settings: Settings = Depends(settings_dependency),
+) -> Response:
+    job = get_runtime().jobs.get(run_id, client.client_id)
+    if job.status != "completed" or job.audio is None:
+        raise APIError(
+            ErrorCode.INVALID_REQUEST,
+            f"Job is '{job.status}', not ready yet. Poll GET /v1/jobs/{run_id}.",
+            status_code=409,
+        )
+    return Response(
+        content=job.audio,
+        media_type=job.media_type or "application/octet-stream",
+        headers={
+            "X-Voice": job.voice,
+            "X-Language": job.language,
+            "X-Audio-Duration-Seconds": f"{job.audio_seconds:.3f}",
+            "X-Generation-Seconds": f"{job.generation_seconds:.3f}",
+            "Content-Disposition": f'attachment; filename="{run_id}.{job.output_format}"',
+        },
+    )
+
+
+@router.delete(
+    "/v1/jobs/{run_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["jobs"],
+    summary="Delete a job and free its audio",
+    responses={404: {"description": "Unknown run_id."}},
+)
+def delete_job(
+    run_id: str,
+    client: ClientContext = Depends(verify_api_key),
+    settings: Settings = Depends(settings_dependency),
+) -> Response:
+    get_runtime().jobs.delete(run_id, client.client_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

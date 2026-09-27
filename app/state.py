@@ -10,6 +10,7 @@ from app.config import Settings
 from app.providers.base import TTSProvider
 from app.providers.kokoro import KokoroProvider
 from app.providers.onnx import KokoroOnnxProvider
+from app.services.jobs import JobQueue
 from app.services.tts import TTSService
 
 PROVIDERS: dict[str, type] = {
@@ -34,6 +35,7 @@ class Runtime:
         self.settings = settings
         self.provider: TTSProvider = provider or build_provider(settings)
         self.service = TTSService(self.provider, settings)
+        self.jobs = JobQueue(self.service)
         self.ready = False
         self.detail: str | None = None
 

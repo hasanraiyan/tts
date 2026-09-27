@@ -45,8 +45,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("preload_model disabled; model will load on first request")
 
+    runtime.jobs.start()
+
     yield
 
+    runtime.jobs.stop()
     logger.info("shutting down")
 
 
