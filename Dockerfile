@@ -41,7 +41,7 @@ ARG PREDOWNLOAD_ONNX_MODEL=true
 RUN if [ "$PREDOWNLOAD_ONNX_MODEL" = "true" ]; then \
       mkdir -p /app/models && \
       curl -fsSL "$ONNX_MODEL_URL" -o /tmp/model.tar.bz2 && \
-      tar -xjf /tmp/model.tar.bz2 -C /app/models && \
+      python -c "import tarfile; tarfile.open('/tmp/model.tar.bz2','r:bz2').extractall('/app/models', filter='data')" && \
       rm /tmp/model.tar.bz2 && \
       test -f "${ONNX_MODEL_DIR}/model.int8.onnx" ; \
     fi

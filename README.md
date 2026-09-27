@@ -229,22 +229,26 @@ docker build -t ai-tts-service:latest .
 docker run --rm -p 8000:8000 -e API_KEY=test ai-tts-service:latest
 ```
 
-The image is CPU-only PyTorch (the default PyPI Linux wheel would drag in ~2 GB
-of unusable CUDA libraries), runs as a non-root user, and has the model weights
-baked in at the pinned revision so cold starts never re-download. `HEALTHCHECK`
-hits `/ready`, so a container whose model failed to load is reported unhealthy
+The default image contains **no PyTorch at all** — just sherpa-onnx and the
+int8 Kokoro model baked in, so it is ~0.9 GB instead of ~3.6 GB and cold starts
+never wait on a download. It runs as a non-root user, and `HEALTHCHECK` hits
+`/ready`, so a container whose model failed to load is reported unhealthy
 rather than silently serving broken audio.
 
-`MODEL_ID` / `MODEL_REVISION` are deliberately **not** set on Render: the image
-is the single source of truth, and letting the runtime disagree with the cached
-weights would force a re-download on every cold start.
+To build the fp32 PyTorch variant instead:
+
+```powershell
+docker build --build-arg TTS_RUNTIME=torch -t ai-tts-service:torch .
+```
+
+That variant needs ~1.3 GB of RAM, so it cannot run on Render's 512 MB plans.
 
 ## Render
 
-See **[RENDER.md](RENDER.md)** for the deploy steps and the exact environment
-variables. Short version: Blueprint deploy, set the four secrets
-(`API_KEY_DEFAULT`, `API_KEY_MINDPAGEREADS`, `API_KEY_COURSIFY`, `HF_TOKEN`),
-plan **standard**, then:
+See **[RENDER.md](RENDER.md)** for the step-by-step dashboard setup. Short
+version: create a Web Service from this repo with Runtime **Docker** and plan
+**Free**, then set four secrets (`API_KEY_DEFAULT`, `API_KEY_MINDPAGEREADS`,
+`API_KEY_COURSIFY`, `HF_TOKEN`) and deploy. Then:
 
 ```bash
 python scripts/smoke_test_api.py https://<service>.onrender.com --api-key <key>
@@ -267,7 +271,9 @@ app/
 │   └── schemas.py       request/response models (drive /docs)
 ├── providers/
 │   ├── base.py          TTSProvider ABC — the only contract the API knows
-│   └── kokoro.py        all Kokoro/HF-specific code lives here
+│   ├── voices.py        shared voice names + name→speaker-id table
+│   ├── onnx.py          default: Kokoro v1.0 int8 via sherpa-onnx (370MB)
+│   └── kokoro.py        optional: Kokoro v1.0 fp32 via PyTorch (1.3GB)
 └── services/
     ├── tts.py           queueing + provider invocation
     ├── audio.py         numpy → mp3/wav via libsndfile
@@ -275,18 +281,21 @@ app/
 
 scripts/
 ├── smoke_tts.py         text → audio → decode, no API involved
-└── smoke_test_api.py    full end-to-end check against any base URL
+├── smoke_test_api.py    full end-to-end check against any base URL
+├── probe_onnx_memory.py measures whether the model fits a memory cap
+└── resolve_voice_ids.py proves the voice name→id mapping across providers
 ```
 
 ### Extending
 
 **Another voice:** set `DEFAULT_VOICE`, or pass any of the 54 Kokoro voices per
-request. Voices are pre-loaded at startup, so no request touches the network.
+request. Both providers pre-load voices at startup, so no request touches the
+network. ONNX addresses voices by integer id, PyTorch by file name; the mapping
+lives in `app/providers/voices.py` so both agree.
 
-**Another language:** add a mapping in `app/providers/kokoro.py`
-(`LANG_CODE_BY_LANGUAGE`) and build a pipeline for it. Kokoro ships Japanese
-(`j`) and Mandarin (`z`) pipelines; other languages route through the espeak
-fallback, which is lower quality.
+**Another language:** add the language to the provider's `list_languages()` and
+load a pipeline for it. Kokoro ships Japanese (`j`) and Mandarin (`z`) pipelines;
+other languages route through the espeak fallback, which is lower quality.
 
 **Another model:** implement `TTSProvider` (`load`, `list_voices`,
 `synthesize`, `supports_language`, `supports_voice`, `model_info`) in a new file
